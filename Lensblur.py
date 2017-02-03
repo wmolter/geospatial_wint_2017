@@ -99,21 +99,27 @@ def NAND(image1, image2):
     return final
 
 filepath_will = "c:/Users/Will Molter/Pictures/Geospatial vision proj1/sample_drive/cam_3/"
-filepath_jacob = "/Users/jdbruce/Downloads/WQ2017/Geospatial/sample_drive/cam_0/"
+filepath_jacob = "/Users/jdbruce/Downloads/WQ2017/Geospatial/sample_drive/"
 
 filepath = filepath_jacob # change this line when you change users
 
+def run_all(sample_drive_path):
+    folders = os.listdir(sample_drive_path)
+    print folders
+    for folder in folders:
+        if folder[:3] == "cam":
+            folder_mask(sample_drive_path+folder+"/", folder)
 
-# loop portion
-# comment here so it doesn't loop
 
-    def folder_mask(path):
+def folder_mask(input_path, output_path):
+    print "Running folder: "
+    print input_path
+    print "Storing output in: "
+    print output_path
+    # num_images = 5
+    # start_image = 100
 
-
-    num_images = 10
-    start_image = 100
-
-    paths = [filepath + filename for filename in os.listdir(filepath)[start_image: start_image + num_images]]
+    paths = [input_path + filename for filename in os.listdir(input_path)]#[start_image: start_image + num_images]]
     prev_image = imageio.imread(paths[0])
 
     counter = 0
@@ -134,84 +140,35 @@ filepath = filepath_jacob # change this line when you change users
         subtract_total += np.abs(im - prev_image)
         prev_image = im
 
+    # prep output directory
+    os.mkdir(output_path)
+    output_path = output_path + "/"
+
     # get mask 1 (from grad)
 
     grad_norm = normalize(gradient_running_total)
-    imageio.imwrite("grad_norm.jpg", grad_norm)
+    imageio.imwrite(output_path + "grad_norm.jpg", grad_norm)
     grad_norm_threshold = threshold(grad_norm, 40)
-    imageio.imwrite("grad_norm_threshold.jpg", grad_norm_threshold)
+    imageio.imwrite(output_path + "grad_norm_threshold.jpg", grad_norm_threshold)
     grad_norm_threshold_median = local_median(grad_norm_threshold)
-    imageio.imwrite("grad_norm_threshold_median.jpg", grad_norm_threshold_median)
+    imageio.imwrite(output_path + "grad_norm_threshold_median.jpg", grad_norm_threshold_median)
 
     mask_1_final = grad_norm_threshold_median
 
     # get mask 2 (from dev)
 
     dev_normalized = normalize(total_approx_dev)
-    imageio.imwrite("deviation.jpg", dev_normalized)
-
-    # dev_normalized = imageio.imread("deviation.jpg")
-    # imageio.imwrite("dev_normalized.jpg", dev_normalized)
-    # # dev_normalized_mean = local_mean(dev_normalized, 50)
+    imageio.imwrite(output_path + "deviation.jpg", dev_normalized)
     dev_normalized_median =  local_median(dev_normalized)  #imageio.imread("dev_normalized_median.jpg") #
-    # dev_normalized_median_median = local_median(dev_normalized_median, 20)  #
-    # imageio.imwrite("dev_normalized_median_median.jpg", dev_normalized_median_median)
-    imageio.imwrite("dev_normalized_median.jpg", dev_normalized_median)
-
-    # dev_normalized_median_prewitt = prewitt_gradient(dev_normalized_median)
-    # imageio.imwrite("dev_normalized_median_prewitt.jpg", dev_normalized_median_prewitt)
-
-
-    # dev_normalized_median_sharpen = sharpen(dev_normalized_median)
-    # imageio.imwrite("dev_normalized_median_sharpen.jpg", dev_normalized_median_sharpen)
-
-
-    #
+    imageio.imwrite(output_path + "dev_normalized_median.jpg", dev_normalized_median)
     dev_normalized_median_threshold = threshold(dev_normalized_median, 10)
-    imageio.imwrite("dev_normalized_median_threshold.jpg", dev_normalized_median_threshold)
-
+    imageio.imwrite(output_path + "dev_normalized_median_threshold.jpg", dev_normalized_median_threshold)
     mask_2_final = dev_normalized_median_threshold
 
-    # final output_array
-
-    # mask_1_final = imageio.imread("grad_norm_threshold_median.jpg")
-    # mask_2_final = imageio.imread("dev_normalized_median_threshold.jpg")
+    # get final mask by NAND of two input masks
 
     final_mask = NAND(mask_1_final, mask_2_final)
-    imageio.imwrite("final_mask.jpg", final_mask)
+    imageio.imwrite(output_path + "final_mask.jpg", final_mask)
+    return
 
-
-
-
-
-    # dev_normalized_median_gradient = true_gradient(dev_normalized_median)
-    # imageio.imwrite("dev_normalized_median_gradient.jpg", dev_normalized_median_gradient)
-
-    # dev_normalized_prewitt = prewitt_gradient(dev_normalized)
-    # imageio.imwrite("dev_normalized_prewitt.jpg",dev_normalized_prewitt)
-
-    # average = imageio.imread("average.jpg")
-    # # average_sobel = sobel_gradient(average)
-    # average_prewitt = imageio.imread("average_prewitt.jpg")
-    # # average_grad = get_true_gradient(average)
-    # # average_prewitt = get_prewitt_gradient(average)
-    # average_sobel = imageio.imread("average_sobel.jpg")
-    #
-    # average_prewitt_mean = local_mean(average_prewitt, 10)
-    # # average_prewitt_mean_mean = local_mean(average_prewitt_mean)
-    # average_prewitt_median_5 = local_median(average_prewitt, 5)
-    # average_prewitt_median_10 = local_median(average_prewitt, 10)
-    # average_prewitt_median_15 = local_median(average_prewitt, 15)
-    # average_prewitt_median_20 = local_median(average_prewitt, 20)
-    #
-    # imageio.imwrite("average.jpg", average)
-    # imageio.imwrite("average_prewitt.jpg", average_prewitt)
-    # imageio.imwrite("average_sobel.jpg", average_sobel)
-    # imageio.imwrite("average_prewitt_mean.jpg", average_prewitt_mean)
-    # imageio.imwrite("average_prewitt_median_5.jpg", average_prewitt_median_5)
-    # imageio.imwrite("average_prewitt_median_10.jpg", average_prewitt_median_10)
-    # imageio.imwrite("average_prewitt_median_15.jpg", average_prewitt_median_15)
-    # imageio.imwrite("average_prewitt_median_20.jpg", average_prewitt_median_20)
-    # imageio.imwrite("average_prewitt_mean_mean.jpg", average_prewitt_mean_mean)
-
-    # imageio.imwrite("gradient.jpg", gradient_running_total)
+run_all(filepath_jacob)

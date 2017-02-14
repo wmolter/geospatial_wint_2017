@@ -133,11 +133,14 @@ def assign_nodes(nodepath, linkpath, probe_points, links):
 
 
 def sort_control_points(points):
+    # given a list of points of type Point3D, generates two lists sorted
+    # by increasing latitude and longitude
     sorted_latitudes = sorted(points, key=attrgetter('latitude'))
     sorted_longitudes = sorted(points, key=attrgetter('longitude'))
     return sorted_latitudes, sorted_longitudes
 
 def write_links_csv(links, filename):
+    # given a list of links of type Link, writes them to a CSV file of a given name
     out_file = open(filename, 'wb')
     writer = csv.writer(out_file, delimiter = ",")
     for link in links:
@@ -147,6 +150,8 @@ def write_links_csv(links, filename):
     out_file.close()
 
 def write_points_csv(control_points, filename):
+    # given a list of links of type Point3D, writes them to a CSV file of a given name
+    # only writes the assigned linkPVID, latitude, and longitude
     out_file = open(filename, 'wb')
     writer = csv.writer(out_file, delimiter = ",")
     for control_point in control_points:
@@ -155,6 +160,8 @@ def write_points_csv(control_points, filename):
     out_file.close()
 
 def write_probe_csv(probe_points, filename):
+    # given a list of links of type Point3D, writes them to a CSV file of a given name
+    # only writes the assigned sampleID, latitude, and longitude
     out_file = open(filename, 'wb')
     writer = csv.writer(out_file, delimiter=",")
     for probe in probe_points:
@@ -163,12 +170,17 @@ def write_probe_csv(probe_points, filename):
     out_file.close()
 
 def get_control_point_list(links):
+    # given a list of type Link, returns all of the control points in those links
     points = []
     for link in links:
         points += link.shapeInfo
     return points
 
 def control_points_in_range(probe_point, radius_meters, sorted_latitudes, sorted_longitudes):
+    # given a specific probe point (Point3D), finds all of the control points (point3D) within a specific range
+    # the range is given in meters, and defines a square (roughly speaking)
+    # also requires the two lists of control points sorted by latitude and longitude (lists of Point3D)
+
     point3d = probe_point.point3D
     radius_latitude = meters_to_degrees_latitude(radius_meters)
     lat_start = point3d.latitude - radius_latitude
@@ -179,7 +191,7 @@ def control_points_in_range(probe_point, radius_meters, sorted_latitudes, sorted
     print "latitude indices:", lat_start_index, lat_end_index
     radius_longitude = meters_to_degrees_longitude(radius_meters, point3d.latitude)
     long_start = point3d.longitude - radius_longitude
-    long_start_index= bisect_point3D(sorted_longitudes, long_start, "longitude")
+    long_start_index = bisect_point3D(sorted_longitudes, long_start, "longitude")
     long_end = point3d.longitude + radius_longitude
     print "longitude range:", long_start, long_end
     long_end_index = bisect_point3D(sorted_longitudes, long_end, "longitude")
@@ -190,6 +202,10 @@ def control_points_in_range(probe_point, radius_meters, sorted_latitudes, sorted
     return potential_points
 
 def bisect_point3D(points, value, attribute):
+    # wrapper function for recursive call
+    # given a list of point3D and a search value (either lat or long)
+    # and the attribute indicating whether it's lat or long,
+    # returns the index closest to the value via recursive binary search
     return bisect_point3D_helper(points, value, attribute, 0, len(points))
 
 def bisect_point3D_helper(points, value, attribute, start_index, end_index):
@@ -226,33 +242,45 @@ def heading_score(probe_point, control_point):
 
 
 def compare_angles(angle1, angle2):
+    # finds the minimum difference between two angles
     diff = abs(angle1 - angle2) % 360.0
     if diff > 180:
         diff = 360-diff
     return diff
 
-def speed_score(probe_point, control_point):
-    pass
+def speed_diff(probe_point, control_point, direction):
+    # finds the difference between the speed of the probe_point (Point3D)
+    # and the speed limit associated with the control_point (Point3D)
+    # in the direction of travel for the probe_point
+    # (requires the direction of travel returned by heading_score)
 
-
+    if direction == "T":
+        link_speed = control_point.parentRef.toRefSpeedLimit
+    else:
+        link_speed = control_point.parentRef.fromRefSpeedLimit
+    return abs(probe_point.speed - link_speed)
 
 def latitude_degrees_to_meters(latitude_distance):
+    # converts latitude in degrees to meters
     return latitude_distance*111111
 
 def meters_to_degrees_latitude(meters):
+    # convert distance in meters to latitude in degrees
     return meters/111111.0
 
 def longitude_degrees_to_meters(longitude_distance, current_latitude):
+    # converts longitude in degrees to meters
     return longitude_distance*111111*cos(current_latitude)
 
 def meters_to_degrees_longitude(meters, current_latitude):
+    # convert distance in meters to longitude in degrees
     return meters/111111.0/cos(current_latitude)
 
 jacob_path = '/Users/jdbruce/Downloads/WQ2017/Geospatial/probe_data_map_matching/'
 will_path = 'c:/Users/Will Molter/Documents/College/Winter 2017/EECS 395/proj2/'
 links_filename = 'Partition6467LinkData.csv'
 points_filename = 'Partition6467ProbePoints.csv'
-path = will_path
+path = jacob_path
 
 links = parse_links_csv(path + links_filename)
 control_points = get_control_point_list(links)
@@ -264,15 +292,14 @@ for probe_point in points:
     candidate_points = control_points_in_range(probe_point, 500, sorted_latitudes, sorted_longitudes)
 
     distances = [probe_point.point3D.distance_2D(control_point) for control_point in candidate_points]
-    speed_scores = [abs(probe_point.speed - control_point.parentRef.toRefSpeedLimit) for control_point in candidate_points]
+    # speed_scores = [abs(probe_point.speed - control_point.parentRef.toRefSpeedLimit) for control_point in candidate_points]
     heading_info = [heading_score(probe_point, control_point) for control_point in candidate_points]
     heading_scores = [pair[1] for pair in heading_info]
     directions = [pair[0] for pair in heading_info]
+    speed_diffs = [speed_diff(probe_point, candidate_points[i], directions[i]) for i in range(len(directions))]
+    speed_scores = 1.0 - 1.0*speed_diffs / max(speed_diffs) # gives value between 1 and 0, higher being better (less speed discrepancy)
     print "directions: ", directions
     print "heading scores: ", heading_scores
-    # best_link = None
-    # probe_point.linkPVID = best_link.linkPVID
-    # probe_point.matchedLink = best_link
     # print "For sampleID: ", probe_point.sampleID
     # print "We matched link: ", probe_point.linkPVID
     #write_points_csv(candidate_points, "points.csv")

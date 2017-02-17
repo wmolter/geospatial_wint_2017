@@ -289,12 +289,11 @@ def meters_to_degrees_longitude(meters, current_latitude):
     # convert distance in meters to longitude in degrees
     return meters/111111.0/cos(current_latitude)
 
-def normalize(differences):
+def normalize(differences, max_diff):
     # given a list of differences, returns a list of scores
     # assuming that low difference is good and high difference is bad
-    # score is between 0 and 1, 0 being bad (high difference) and 1 being good (low difference)
-    max_diff = max(differences)
-    return [1.0 - 1.0*diff/max_diff for diff in differences]
+    # score is between 0 and 1, 0 being good (low difference) and 1 being bad (high difference)
+    return [1.0*diff/max_diff for diff in differences]
 
 jacob_path = '/Users/jdbruce/Downloads/WQ2017/Geospatial/probe_data_map_matching/'
 will_path = 'c:/Users/Will Molter/Documents/College/Winter 2017/EECS 395/proj2/'
@@ -308,22 +307,24 @@ sorted_latitudes, sorted_longitudes = sort_control_points(control_points)
 
 points = parse_nodes_csv(path + points_filename, 0, 1, 2)
 
+search_radius = 100
+
 for probe_point in points:
     print probe_point
-    candidate_points = control_points_in_range(probe_point, 100, sorted_latitudes, sorted_longitudes)
+    candidate_points = control_points_in_range(probe_point, search_radius, sorted_latitudes, sorted_longitudes)
     print "Number of Candidate Points: ", len(candidate_points)
 
     # distance scoring
     distances = [probe_point.point3D.distance_2D(control_point) for control_point in candidate_points]
     print "Distances :", distances
-    distance_scores = normalize(distances)
+    distance_scores = normalize(distances, search_radius)
     print "Distance Scores: ", distance_scores
 
     # heading scoring
     heading_info = [heading_diff(probe_point, control_point) for control_point in candidate_points]
     heading_diffs = [pair[1] for pair in heading_info]
     print "Heading Diffs: ", heading_diffs
-    heading_scores = normalize(heading_diffs)
+    heading_scores = normalize(heading_diffs, 180)
     print "heading scores: ", heading_scores
 
     # speed scoring
@@ -331,18 +332,18 @@ for probe_point in points:
     print "directions: ", directions
     speed_diffs = [speed_diff(probe_point, candidate_points[i], directions[i]) for i in range(len(directions))]
     print "speed_diffs", speed_diffs
-    speed_scores = normalize(speed_diffs)
+    speed_scores = normalize(speed_diffs, 150)
     print "speed scores: ", speed_scores
 
     # score totaling
     distance_weight = 1.0
-    heading_weight = 2.0
+    heading_weight = 1.0
     speed_weight = 1.0
 
     scores = [distance_weight*distance_scores[i] + heading_weight*heading_scores[i] + speed_weight*speed_scores[i] for i in range(len(candidate_points))]
     print "Scores: ", scores
 
-    best_score_index = scores.index(max(scores))
+    best_score_index = scores.index(min(scores))
     print "Best index: ", best_score_index
     best_point = candidate_points[best_score_index]
     print "Best point: " + repr(best_point)

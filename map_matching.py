@@ -18,6 +18,13 @@ class ProbePoint:
         distFromRef = None      # is the distance from the reference node to the map-matched probe point location on the link in decimal meters.
         distFromLink = None       # is the perpendicular distance from the map-matched probe point location on the link to the probe point in decimal meters.
         matchedLinke = None
+    def __repr__(self):
+        outstring = "\nSampleID: " + str(self.sampleID)
+        outstring += "\nPoint3D: " + repr(self.point3D)
+        outstring += "\nSpeed: " + str(self.speed)
+        outstring += "\nHeading: " + str(self.heading)
+        outstring += "\n"
+        return outstring
 
 class Link:
     def __init__(self, list_in):
@@ -97,6 +104,7 @@ def parse_points_from_string(shape_info, parent=None):
     return return_list
 
 def parse_links_csv(path):
+    print "Parsing Links from File"
     with open(path, 'rb') as links_file:
         line_reader = csv.reader(links_file)
         links_list = []
@@ -105,6 +113,7 @@ def parse_links_csv(path):
     return links_list
 
 def parse_nodes_csv(path, start, decimation, end):
+    print "Parsing Nodes from File"
     probe_points_file = open(path, 'rb')
     probe_point_line_reader = csv.reader(probe_points_file)
 
@@ -114,7 +123,7 @@ def parse_nodes_csv(path, start, decimation, end):
         if counter % decimation != 0:
             counter = counter + 1
             continue
-        print counter
+        # print counter
         counter = counter + 1
         # print probe_point_line
         probe_point = ProbePoint(probe_point_line)
@@ -135,6 +144,7 @@ def assign_nodes(nodepath, linkpath, probe_points, links):
 def sort_control_points(points):
     # given a list of points of type Point3D, generates two lists sorted
     # by increasing latitude and longitude
+    print "Sorting control points"
     sorted_latitudes = sorted(points, key=attrgetter('latitude'))
     sorted_longitudes = sorted(points, key=attrgetter('longitude'))
     return sorted_latitudes, sorted_longitudes
@@ -223,7 +233,11 @@ def bisect_point3D_helper(points, value, attribute, start_index, end_index):
     else:
         return mid_index
 
-def heading_score(probe_point, control_point):
+def heading_diff(probe_point, control_point):
+    # aligns the probe point with a direction on the control point
+    # computes the difference between the heading of the control point
+    # and the probe point
+
     if control_point.parentRef.directionOfTravel is "F":
         headings = [control_point.heading]
         direction = "F"
@@ -239,7 +253,6 @@ def heading_score(probe_point, control_point):
         else:
             direction = "F"
     return direction, min(diffs)
-
 
 def compare_angles(angle1, angle2):
     # finds the minimum difference between two angles
@@ -276,6 +289,13 @@ def meters_to_degrees_longitude(meters, current_latitude):
     # convert distance in meters to longitude in degrees
     return meters/111111.0/cos(current_latitude)
 
+def normalize(differences):
+    # given a list of differences, returns a list of scores
+    # assuming that low difference is good and high difference is bad
+    # score is between 0 and 1, 0 being bad (high difference) and 1 being good (low difference)
+    max_diff = max(differences)
+    return [1.0 - 1.0*diff/max_diff for diff in differences]
+
 jacob_path = '/Users/jdbruce/Downloads/WQ2017/Geospatial/probe_data_map_matching/'
 will_path = 'c:/Users/Will Molter/Documents/College/Winter 2017/EECS 395/proj2/'
 links_filename = 'Partition6467LinkData.csv'
@@ -286,20 +306,47 @@ links = parse_links_csv(path + links_filename)
 control_points = get_control_point_list(links)
 sorted_latitudes, sorted_longitudes = sort_control_points(control_points)
 
-points = parse_nodes_csv(path + points_filename, 0, 1, 1)
+points = parse_nodes_csv(path + points_filename, 0, 1, 2)
 
 for probe_point in points:
-    candidate_points = control_points_in_range(probe_point, 500, sorted_latitudes, sorted_longitudes)
+    print probe_point
+    candidate_points = control_points_in_range(probe_point, 100, sorted_latitudes, sorted_longitudes)
+    print "Number of Candidate Points: ", len(candidate_points)
 
+    # distance scoring
     distances = [probe_point.point3D.distance_2D(control_point) for control_point in candidate_points]
-    # speed_scores = [abs(probe_point.speed - control_point.parentRef.toRefSpeedLimit) for control_point in candidate_points]
-    heading_info = [heading_score(probe_point, control_point) for control_point in candidate_points]
-    heading_scores = [pair[1] for pair in heading_info]
-    directions = [pair[0] for pair in heading_info]
-    speed_diffs = [speed_diff(probe_point, candidate_points[i], directions[i]) for i in range(len(directions))]
-    speed_scores = 1.0 - 1.0*speed_diffs / max(speed_diffs) # gives value between 1 and 0, higher being better (less speed discrepancy)
-    print "directions: ", directions
+    print "Distances :", distances
+    distance_scores = normalize(distances)
+    print "Distance Scores: ", distance_scores
+
+    # heading scoring
+    heading_info = [heading_diff(probe_point, control_point) for control_point in candidate_points]
+    heading_diffs = [pair[1] for pair in heading_info]
+    print "Heading Diffs: ", heading_diffs
+    heading_scores = normalize(heading_diffs)
     print "heading scores: ", heading_scores
+
+    # speed scoring
+    directions = [pair[0] for pair in heading_info]
+    print "directions: ", directions
+    speed_diffs = [speed_diff(probe_point, candidate_points[i], directions[i]) for i in range(len(directions))]
+    print "speed_diffs", speed_diffs
+    speed_scores = normalize(speed_diffs)
+    print "speed scores: ", speed_scores
+
+    # score totaling
+    distance_weight = 1.0
+    heading_weight = 2.0
+    speed_weight = 1.0
+
+    scores = [distance_weight*distance_scores[i] + heading_weight*heading_scores[i] + speed_weight*speed_scores[i] for i in range(len(candidate_points))]
+    print "Scores: ", scores
+
+    best_score_index = scores.index(max(scores))
+    print "Best index: ", best_score_index
+    best_point = candidate_points[best_score_index]
+    print "Best point: " + repr(best_point)
+
     # print "For sampleID: ", probe_point.sampleID
     # print "We matched link: ", probe_point.linkPVID
     #write_points_csv(candidate_points, "points.csv")
@@ -307,7 +354,7 @@ for probe_point in points:
 
 
 #probe_list = assign_nodes(will_path + points_filename, will_path + links_filename)
-write_probe_csv(points, "probes.csv")
+# write_probe_csv(points, "probes.csv")
 #write_links_csv([probe.matchedLink for probe in probe_list], "links.csv")
 
 # parse_point_from_string('51.4965800/9.3862299/|51.4994700/9.3848799/')

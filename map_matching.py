@@ -15,9 +15,9 @@ class ProbePoint:
         self.heading = int(list_in[7])   # is the heading in degrees.
         linkPVID = None         # is the published versioned identifier for the link.
         direction = None        # is the direction the vehicle was travelling on thelink (F = from ref node, T = towards ref node).
+        snappedControlPoint = None
         distFromRef = None      # is the distance from the reference node to the map-matched probe point location on the link in decimal meters.
         distFromLink = None       # is the perpendicular distance from the map-matched probe point location on the link to the probe point in decimal meters.
-        matchedLinke = None
     def __repr__(self):
         outstring = "\nSampleID: " + str(self.sampleID)
         outstring += "\nPoint3D: " + repr(self.point3D)
@@ -46,7 +46,9 @@ class Link:
         self.shapeInfo = parse_points_from_string(list_in[14], self)		# contains an array of shape entries consisting of the latitude and longitude (in decimal degrees) and elevation (in decimal meters) for the link's nodes and shape points ordered as reference node, shape points, non-reference node. The array entries are delimited by a vertical bar character and the latitude, longitude, and elevation values for each entry are delimited by a forward slash character (e.g. lat/lon/elev|lat/lon/elev). The elevation values will be null for links that don't have 3D data.
         self.curvatureInfo = list_in[15]		# contains an array of curvature entries consisting of the distance from reference node (in decimal meters) and curvature at that point (expressed as a decimal value of 1/radius in meters). The array entries are delimited by a vertical bar character and the distance from reference node and curvature values for each entry are separated by a forward slash character (dist/curvature|dist/curvature). This entire field will be null if there is no curvature data for the link.
         self.slopeInfo = list_in[16]		# contains an array of slope entries consisting of the distance from reference node (in decimal meters) and slope at that point (in decimal degrees). The array entries are delimited by a vertical bar character and the distance from reference node and slope values are separated by a forward slash character (dist/slope|dist/slope). This entire field will be null if there is no slope data for the link.
+        self.estSlopeInfo = None
         self.refNode = self.shapeInfo[0]
+        self.matchedProbePoints = []
         self.get_headings()
 
     def get_headings(self):
@@ -59,13 +61,100 @@ class Link:
                 directions.append(azimuth(self.shapeInfo[index], self.shapeInfo[index+1]))
             final_direction = sum(directions)*1.0/len(directions)
             self.shapeInfo[index].heading = final_direction
+        return
+        
+    def estimate_slope_info(self):
+        # assumes that at least two points have already been snapped to this link, i.e. len(matchedProbePoints > 1)
+        # assumes we can't use elevation of control points to calculate slope, only snapped probe points
+
+        # first, get a list of control point dicts
+        # each dict has points (a list), elevation, slope, and control point data
+
+        control_point_data = []
+
+        for control_point in self.shapeInfo:
+            datum = {}
+            associated_probe_points = []
+            for probe_point in self.matchedProbePoints:
+                if probe_point.snappedControlPoint is control_point:
+                    associated_probe_points.append(probe_point)
+            datum["points"] = associated_probe_points
+            # For each control point, estimate its elevation by the average of the probe points snapped to it
+            # if there are no probe points snapped to it, do not estimate its elevation
+            if len(associated_probe_points) is 0:
+                datum["elevation"] = None
+            else:
+                elevations = [probe_point.point3D.elevation for probe_point in associated_probe_points]
+                datum["elevation"] = 1.0 * sum(elevations) / len(elevations)
+            datum["slope"] = None
+            datum["control point"] = control_point
+            control_point_data.append(datum)
+
+        # estimate slopes between points by drawing lines between points with estimated elevations
+
+        index = 0
+        slopes = []
+
+        current_slope = {"start_index": None, "end_index": None, "slope": None} # structure is: start index, end index, slope
+        start_elevation = None
+
+        for (point_index, datum) in enumerate(control_point_data):
+            if datum["elevation"] is None:
+                continue
+            # elevation is defined for this point,
+            # we should count it for calculating slope
+            if current_slope["start_index"] is None:
+                # this is the first point
+                start_elevation = datum["elevation"]
+                current_slope["start_index"] = point_index
+            else:
+                # this is the second point of one line, and the first of the next
+                current_slope["end_index"] = point_index
+                current_slope["slope"] = caclulate_slope(self.shapeInfo[current_slope["start_index"]], start_elevation, self.shapeInfo[point_index], datum["elevation"])
+                slopes.append(current_slope)
+                # start the next line
+                current_slope = {}
+                current_slope["start_index"] = point_index
 
 
+        # estimate slopes at points by taking the average of forward and backward slope, if available
+        # if not available, take the average of any slope passing through the point
 
-def azimuth(point1, point2):
-    y = sin(point2.longitude - point1.longitude)*cos(point2.latitude)
-    x = cos(point1.latitude)*sin(point2.latitude) - sin(point1.latitude)*cos(point2.latitude)*cos(point2.longitude - point1.longitude)
-    return 180*atan2(y, x)/math.pi
+        for point_index in range(len(control_point_data)):
+            # find whether it occurs at all in the slope list
+            probe_point_datum = control_point_data[point_index]
+            for (slope_index, slope_datum) in enumerate(slopes):
+                if point_index <= slope_datum["start_index"]:
+                    # the point is less than the first slope
+                    # or it would have been handled already
+                    # so estimate its slope by the first slope that we can find
+                    probe_point_datum["slope"] = slope_datum["slope"]
+                    break
+                if (point_index > slope_datum["start_index"]) and (point_index < slope_datum["end_index"]):
+                    # if it's between two indices, it's on the line (it didn't have elevation data)
+                    # so assign it the slope of that line
+                    probe_point_datum["slope"] = slope_datum["slope"]
+                    break
+                if point_index is slope_datum["end_index"]:
+                    # this point is the end of one line
+                    try:
+                        assert(point_index is slopes[slope_index + 1]["start_index"])
+                        # if there is another slope entry, this point should be the start of that as well
+                        # this should be the most common case, where we average between the forward and backward slopes
+                        probe_point_datum["slope"] = 1.0* (slope_datum["slope"] + slopes[slope_index + 1]["slope"]) / 2
+                        break
+                    except IndexError:
+                        # if there was an Index error, this slope was actually the last one
+                        # in that case, the slope should just be the backward slope
+                        probe_point_datum["slope"] = slope_datum["slope"]
+                        break
+                if point_index > slope_datum["end_index"]:
+                    # the point is further than the last slope entry we have
+                    # so we estimate its slope by the last slope
+                    probe_point_datum["slope"] = slope_datum["slope"]
+                    break
+        return
+
 
 class Point3D:
     def __init__(self, latitude, longitude, elevation, parent=None):
@@ -134,6 +223,15 @@ def parse_nodes_csv(path, start, decimation, end):
     probe_points_file.close()
     return probe_list
 # helper functions
+
+def caclulate_slope(pt3D1, elev1, pt3D2, elev2):
+    # calculates the slope as pt2 - pt1
+    # if the slope goes up from pt1 to pt2, the value will be positive
+
+    delta_elev = elev2 - elev1
+    crow_distance = pt3D1.distance_2D(pt3D2) # 2D distance between the points
+
+    return math.degrees(math.atan2(delta_elev, crow_distance))
 
 def assign_nodes(nodepath, linkpath, probe_points, links):
     pass
@@ -233,6 +331,11 @@ def bisect_point3D_helper(points, value, attribute, start_index, end_index):
     else:
         return mid_index
 
+def azimuth(point1, point2):
+    y = sin(point2.longitude - point1.longitude)*cos(point2.latitude)
+    x = cos(point1.latitude)*sin(point2.latitude) - sin(point1.latitude)*cos(point2.latitude)*cos(point2.longitude - point1.longitude)
+    return 180*atan2(y, x)/math.pi
+
 def heading_diff(probe_point, control_point):
     # aligns the probe point with a direction on the control point
     # computes the difference between the heading of the control point
@@ -309,7 +412,11 @@ points = parse_nodes_csv(path + points_filename, 0, 1, 2)
 
 search_radius = 100
 
+print "Matching Points"
+counter = 0
+
 for probe_point in points:
+    print counter
     print probe_point
     candidate_points = control_points_in_range(probe_point, search_radius, sorted_latitudes, sorted_longitudes)
     print "Number of Candidate Points: ", len(candidate_points)
@@ -348,14 +455,32 @@ for probe_point in points:
     best_point = candidate_points[best_score_index]
     print "Best point: " + repr(best_point)
 
-    # print "For sampleID: ", probe_point.sampleID
-    # print "We matched link: ", probe_point.linkPVID
-    #write_points_csv(candidate_points, "points.csv")
+    # link matching (updating the fields)
+    matched_link = best_point.parentRef
+    matched_link.matchedProbePoints.append(probe_point)
+    probe_point.linkPVID = matched_link.linkPVID
+    probe_point.direction = directions[best_score_index]
+    probe_point.snappedControlPoint = best_point
 
+    print "For sampleID: ", probe_point.sampleID
+    print "We matched link: ", probe_point.linkPVID
+
+    counter = counter + 1
+
+# road slope derivation and evaluation
+print "Calculating Road Slope"
+
+for link in links:
+    # road slope derivation
+    if len(link.matchedProbePoints) < 2:
+        print "No point matched to this link"
+    else:
+        # calculate road slope
+    # road slope evaluation
+    if link.slopeInfo is None:
+        print "No slope info to compare on this link"
 
 
 #probe_list = assign_nodes(will_path + points_filename, will_path + links_filename)
 # write_probe_csv(points, "probes.csv")
 #write_links_csv([probe.matchedLink for probe in probe_list], "links.csv")
-
-# parse_point_from_string('51.4965800/9.3862299/|51.4994700/9.3848799/')

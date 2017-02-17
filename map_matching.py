@@ -17,7 +17,7 @@ class ProbePoint:
         direction = None        # is the direction the vehicle was travelling on thelink (F = from ref node, T = towards ref node).
         distFromRef = None      # is the distance from the reference node to the map-matched probe point location on the link in decimal meters.
         distFromLink = None       # is the perpendicular distance from the map-matched probe point location on the link to the probe point in decimal meters.
-        matchedLinke = None
+        matchedLink = None
 
 class Link:
     def __init__(self, list_in):
@@ -231,9 +231,75 @@ def compare_angles(angle1, angle2):
         diff = 360-diff
     return diff
 
+#untested for now
+def snap_to_link(probe_point, link):
+    best_index = 0
+    best_distance = 100000000
+    best_x = 0
+    best_y = 0
+
+    py = latitude_degrees_to_meters(probe_point.point3D.latitude)
+    px = longitude_degrees_to_meters(probe_point.point3D.longitude, probe_point.point3D.latitude)
+
+    for i in range(len(link.shapeInfo) - 1):
+        point1 = link.shapeInfo[i]
+        point2 = link.shapeInfo[i+1]
+        y1 = latitude_degrees_to_meters(point1.latitude)
+        y2 = latitude_degrees_to_meters(point2.latitude)
+        x1 = longitude_degrees_to_meters(point1.longitude, point1.latitude)
+        x2 = longitude_degrees_to_meters(point2.longitude, point2.latitude)
+        if i == 0:
+            refpx = x1
+            refpy = y1
+
+        vx = x2 - x1
+        vy = y2 - y1
+        toPx = px - x1
+        toPy = py - y1
+
+        project = (toPx * vx + toPy * vy) / (vx*vx + vy*vy)
+        projectVx = vx*project
+        projectVy = vy*project
+
+        link_distance_sqr = vx*vx + vy*vy
+        signed_distance_sqr = projectVx*projectVx + projectVy*projectVy
+        #negative dot product means opposite direction
+        if project < 0:
+            signed_distance_sqr *= -1
+
+        # add projected vector to the reference point.
+        if signed_distance_sqr < 0:
+            projectx = x1
+            projecty = y1
+        elif signed_distance_sqr > link_distance_sqr:
+            projectx = x2
+            projecty = y2
+        else:
+            projectx = x1 + projectVx
+            projecty = y1 + projectVy
+
+        #calculate whether this is better than the last
+        distance = sqrt((px - projectx)**2 + (px - projecty)**2)
+        if distance < best_distance:
+            print "distsqr: ", signed_distance_sqr
+            print "controldistsqr: ", link_distance_sqr
+            best_index = i
+            best_distance = distance
+            best_x = projectx
+            best_y = projecty
+    probe_point.distFromLink = best_distance
+    probe_point.distFromRef = sqrt((best_x - refpx)**2 + (best_y - refpy)**2)
+    print "best point: ", best_x, ", ", best_y
+    print "probe point: ", px, ", ", py
+    print "control points: ", link.shapeInfo[best_index], ", ", link.shapeInfo[best_index+1]
+    print "probe point lat/long: ", probe_point.point3D.latitude, ", ", probe_point.point3D.longitude
+    best_lat = meters_to_degrees_latitude(best_y)
+    best_long = meters_to_degrees_longitude(best_x, best_lat)
+    return Point3D(best_lat, best_long, 0)
+
+
 def speed_score(probe_point, control_point):
     pass
-
 
 
 def latitude_degrees_to_meters(latitude_distance):
@@ -259,17 +325,22 @@ control_points = get_control_point_list(links)
 sorted_latitudes, sorted_longitudes = sort_control_points(control_points)
 
 points = parse_nodes_csv(path + points_filename, 0, 1, 1)
-
+snapped_points = []
 for probe_point in points:
     candidate_points = control_points_in_range(probe_point, 500, sorted_latitudes, sorted_longitudes)
+    best_link = candidate_points[0].parentRef
+    snapped = snap_to_link(probe_point, best_link)
+    snapped.parentRef = best_link
+    snapped_points.append(snapped)
+    probe_point.matchedLink = best_link
 
-    distances = [probe_point.point3D.distance_2D(control_point) for control_point in candidate_points]
-    speed_scores = [abs(probe_point.speed - control_point.parentRef.toRefSpeedLimit) for control_point in candidate_points]
-    heading_info = [heading_score(probe_point, control_point) for control_point in candidate_points]
-    heading_scores = [pair[1] for pair in heading_info]
-    directions = [pair[0] for pair in heading_info]
-    print "directions: ", directions
-    print "heading scores: ", heading_scores
+    # distances = [probe_point.point3D.distance_2D(control_point) for control_point in candidate_points]
+    # speed_scores = [abs(probe_point.speed - control_point.parentRef.toRefSpeedLimit) for control_point in candidate_points]
+    # heading_info = [heading_score(probe_point, control_point) for control_point in candidate_points]
+    # heading_scores = [pair[1] for pair in heading_info]
+    # directions = [pair[0] for pair in heading_info]
+    # print "directions: ", directions
+    # print "heading scores: ", heading_scores
     # best_link = None
     # probe_point.linkPVID = best_link.linkPVID
     # probe_point.matchedLink = best_link
@@ -281,6 +352,7 @@ for probe_point in points:
 
 #probe_list = assign_nodes(will_path + points_filename, will_path + links_filename)
 write_probe_csv(points, "probes.csv")
-#write_links_csv([probe.matchedLink for probe in probe_list], "links.csv")
+write_points_csv(snapped_points, "snapped.csv")
+write_links_csv([probe.matchedLink for probe in points], "links.csv")
 
 # parse_point_from_string('51.4965800/9.3862299/|51.4994700/9.3848799/')

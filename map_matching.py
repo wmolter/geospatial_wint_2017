@@ -39,10 +39,10 @@ class ProbePoint:
         return outstring
 
     def to_csv_list(self):
-        if self.matchedLink is not None:
-            control_index = self.matchedLink.shapeInfo.index(self.snappedControlPoint)
-        else:
-            control_index = -1
+        # if self.matchedLink is not None:
+        #     # control_index = self.matchedLink.shapeInfo.index(self.snappedControlPoint)
+        # else:
+        control_index = -1
         return [self.sampleID, self.dateTime, self.sourceCode, self.point3D.latitude, self.point3D.longitude, self.point3D.elevation,
                 self.speed, self.heading, self.linkPVID, self.direction, control_index,self.distFromRef, self.distFromLink, self.uniqueID]
 
@@ -66,13 +66,15 @@ class Link:
         self.shapeInfo = parse_points_from_string(list_in[14], self)		# contains an array of shape entries consisting of the latitude and longitude (in decimal degrees) and elevation (in decimal meters) for the link's nodes and shape points ordered as reference node, shape points, non-reference node. The array entries are delimited by a vertical bar character and the latitude, longitude, and elevation values for each entry are delimited by a forward slash character (e.g. lat/lon/elev|lat/lon/elev). The elevation values will be null for links that don't have 3D data.
         self.curvatureInfo = list_in[15]		# contains an array of curvature entries consisting of the distance from reference node (in decimal meters) and curvature at that point (expressed as a decimal value of 1/radius in meters). The array entries are delimited by a vertical bar character and the distance from reference node and curvature values for each entry are separated by a forward slash character (dist/curvature|dist/curvature). This entire field will be null if there is no curvature data for the link.
         self.slopeInfo = list_in[16]		# contains an array of slope entries consisting of the distance from reference node (in decimal meters) and slope at that point (in decimal degrees). The array entries are delimited by a vertical bar character and the distance from reference node and slope values are separated by a forward slash character (dist/slope|dist/slope). This entire field will be null if there is no slope data for the link.
+        self.elevSum = [0] * len(self.shapeInfo) # contains an array of sums of elevation, each corresponding to the control point
+        self.elevCount = [0] * len(self.shapeInfo) # contains an array of counts of elevation data, each corresponding to a control point
         self.estSlopeInfo = None
         self.refNode = self.shapeInfo[0]
-        self.matchedProbePoints = []
+        # self.matchedProbePoints = []
         self.get_headings()
 
-    def to_csv_list(self):
-        return [self.linkPVID, [point.uniqueID for point in self.matchedProbePoints]]
+    # def to_csv_list(self):
+    #     return [self.linkPVID, [point.uniqueID for point in self.matchedProbePoints]]
 
     def get_headings(self):
         index = 0
@@ -85,30 +87,23 @@ class Link:
             final_direction = sum(directions)*1.0/len(directions)
             self.shapeInfo[index].heading = final_direction
         return
-        
+
     def estimate_slope_info(self):
         # assumes that at least two points have already been snapped to this link, i.e. len(matchedProbePoints > 1)
         # assumes we can't use elevation of control points to calculate slope, only snapped probe points
+        # assumes that elevSum and elevCount are both populated, i.e. all the control points have been run
 
         # first, get a list of control point dicts
         # each dict has points (a list), elevation, slope, and control point data
 
         control_point_data = []
 
-        for control_point in self.shapeInfo:
+        for (control_point_index, control_point) in enumerate(self.shapeInfo):
             datum = {}
-            associated_probe_points = []
-            for probe_point in self.matchedProbePoints:
-                if probe_point.snappedControlPoint is control_point:
-                    associated_probe_points.append(probe_point)
-            datum["points"] = associated_probe_points
-            # For each control point, estimate its elevation by the average of the probe points snapped to it
-            # if there are no probe points snapped to it, do not estimate its elevation
-            if len(associated_probe_points) is 0:
+            if self.elevCount[control_point_index] is 0:
                 datum["elevation"] = None
             else:
-                elevations = [probe_point.point3D.elevation for probe_point in associated_probe_points]
-                datum["elevation"] = 1.0 * sum(elevations) / len(elevations)
+                datum["elevation"] = 1.0 * self.elevSum[control_point_index] / self.elevCount[control_point_index]
             datum["slope"] = None
             datum["control point"] = control_point
             control_point_data.append(datum)
@@ -176,6 +171,9 @@ class Link:
                     # so we estimate its slope by the last slope
                     probe_point_datum["slope"] = slope_datum["slope"]
                     break
+
+        self.estSlopeInfo = [datum["slope"] for datum in control_point_data]
+
         return
 
 
@@ -307,12 +305,12 @@ def write_probe_info_csv(probe_points, filename):
         writer.writerow(probe.to_csv_list())
     out_file.close()
 
-def write_link_info_csv(links, filename):
-    out_file = open(filename, 'wb')
-    writer = csv.writer(out_file, delimiter=",")
-    for link in links:
-        writer.writerow(link.to_csv_list())
-    out_file.close()
+# def write_link_info_csv(links, filename):
+#     out_file = open(filename, 'wb')
+#     writer = csv.writer(out_file, delimiter=",")
+#     for link in links:
+#         writer.writerow(link.to_csv_list())
+#     out_file.close()
 
 def get_control_point_list(links):
     # given a list of type Link, returns all of the control points in those links
@@ -505,8 +503,10 @@ def normalize(differences, max_diff):
 
 def match_probe_linkID(probe, link_dict):
     probe.matchedLink = link_dict[probe.linkPVID]
-    probe.snappedControlPoint = probe.matchedLink.shapeInfo[probe.snappedControlPoint]
-    probe.matchedLink.matchedProbePoints.append(probe)
+    # probe.snappedControlPoint = probe.matchedLink.shapeInfo[probe.snappedControlPoint]
+    # probe.matchedLink.matchedProbePoints.append(probe)
+    probe.matchedLink.elevSum[probe.snappedControlPoint] += probe.point3D.elevation
+    matched_link.elevCount[probe.snappedControlPoint] += 1
 
 def get_links_dict(links_list):
     table = {}
@@ -518,7 +518,7 @@ jacob_path = '/Users/jdbruce/Downloads/WQ2017/Geospatial/probe_data_map_matching
 will_path = 'c:/Users/Will Molter/Documents/College/Winter 2017/EECS 395/proj2/'
 links_filename = 'Partition6467LinkData.csv'
 points_filename = 'Partition6467ProbePoints.csv'
-path = will_path
+path = jacob_path
 
 links = parse_links_csv(path + links_filename)
 control_points = get_control_point_list(links)
@@ -570,6 +570,8 @@ counter = 0
 for probe_point_line in probe_point_line_reader:
     if counter % 1000 is 0:
         print counter
+    if counter > 1000:
+        break
     # print probe_point_line
     probe_point = ProbePoint(probe_point_line, counter)
     # print probe_point
@@ -623,10 +625,14 @@ for probe_point_line in probe_point_line_reader:
 
         # link matching (updating the fields)
         matched_link = best_point.parentRef
-        matched_link.matchedProbePoints.append(probe_point)
+        # matched_link.matchedProbePoints.append(probe_point)
+        control_point_index = matched_link.shapeInfo.index(best_point)
+        matched_link.elevSum[control_point_index] += probe_point.point3D.elevation
+        matched_link.elevCount[control_point_index] += 1
+
         probe_point.linkPVID = matched_link.linkPVID
         probe_point.direction = directions[best_score_index]
-        probe_point.snappedControlPoint = best_point
+        # probe_point.snappedControlPoint = best_point
 
     # print "For sampleID: ", probe_point.sampleID
     # print "We matched link: ", probe_point.linkPVID
@@ -635,7 +641,7 @@ for probe_point_line in probe_point_line_reader:
 
 out_file.close()
 in_file.close()
-write_link_info_csv(links, "link_probe_info.csv")
+# write_link_info_csv(links, "link_probe_info.csv")
 # road slope derivation and evaluation
 # print "Calculating Road Slope"
 #
@@ -668,4 +674,3 @@ write_link_info_csv(links, "link_probe_info.csv")
 
 
 # parse_point_from_string('51.4965800/9.3862299/|51.4994700/9.3848799/')
-

@@ -65,11 +65,33 @@ class Link:
         self.timeZone = float(list_in[13])		# is the time zone offset (in decimal hours) from UTC.
         self.shapeInfo = parse_points_from_string(list_in[14], self)		# contains an array of shape entries consisting of the latitude and longitude (in decimal degrees) and elevation (in decimal meters) for the link's nodes and shape points ordered as reference node, shape points, non-reference node. The array entries are delimited by a vertical bar character and the latitude, longitude, and elevation values for each entry are delimited by a forward slash character (e.g. lat/lon/elev|lat/lon/elev). The elevation values will be null for links that don't have 3D data.
         self.curvatureInfo = list_in[15]		# contains an array of curvature entries consisting of the distance from reference node (in decimal meters) and curvature at that point (expressed as a decimal value of 1/radius in meters). The array entries are delimited by a vertical bar character and the distance from reference node and curvature values for each entry are separated by a forward slash character (dist/curvature|dist/curvature). This entire field will be null if there is no curvature data for the link.
-        self.slopeInfo = list_in[16]		# contains an array of slope entries consisting of the distance from reference node (in decimal meters) and slope at that point (in decimal degrees). The array entries are delimited by a vertical bar character and the distance from reference node and slope values are separated by a forward slash character (dist/slope|dist/slope). This entire field will be null if there is no slope data for the link.
-        self.estSlopeInfo = None
+        if list_in[16] is None or list_in[16] is "":
+            self.slopeInfo = None
+        else:
+            self.slopeInfo = list_in[16].split("|")	# contains an array of slope entries consisting of the distance from reference node (in decimal meters) and slope at that point (in decimal degrees). The array entries are delimited by a vertical bar character and the distance from reference node and slope values are separated by a forward slash character (dist/slope|dist/slope). This entire field will be null if there is no slope data for the link.
+
+        if self.slopeInfo is not None and len(self.slopeInfo) is not len(self.shapeInfo):
+            print "Different slope info lengths. ID: ", self.linkPVID, "shapeInfo: ", len(self.shapeInfo), "slopeInfo: ", len(self.slopeInfo)
+            print "Distance: ", self.slopeInfo
+        self.estSlopeInfo = [10]
+        print "error", self.get_error()
         self.refNode = self.shapeInfo[0]
         self.matchedProbePoints = []
         self.get_headings()
+
+    def get_error(self):
+        if self.slopeInfo is None:
+            return None
+        total = 0
+        for i in range(len(self.estSlopeInfo)):
+            dist, slope = self.slopeInfo[i].split("/")
+            slope = float(slope)
+            estSlope = self.estSlopeInfo[i]
+            total += abs(estSlope-slope)
+        average = total / len(self.estSlopeInfo)
+        return average
+
+
 
     def to_csv_list(self):
         return [self.linkPVID, [point.uniqueID for point in self.matchedProbePoints]]
@@ -514,6 +536,20 @@ def get_links_dict(links_list):
         table[link.linkPVID] = link
     return table
 
+def get_total_error(links):
+    total = 0
+    max_error = 0
+    max_link = 0
+    for link in links:
+        error = link.get_error()
+        if error is not None:
+            total += error
+            if error > max_error:
+                max_error = error
+                max_link = link.linkPVID
+    average = total / len(links)
+    return average, max_error, max_link
+
 jacob_path = '/Users/jdbruce/Downloads/WQ2017/Geospatial/probe_data_map_matching/'
 will_path = 'c:/Users/Will Molter/Documents/College/Winter 2017/EECS 395/proj2/'
 links_filename = 'Partition6467LinkData.csv'
@@ -550,92 +586,92 @@ sorted_latitudes, sorted_longitudes = sort_control_points(control_points)
 #
 # search_radius = 200
 #
-best_points = []
-all_candidates = []
-snapped_points = []
-
-#points = parse_nodes_csv(path + points_filename, 0, 1, -1)
-
-search_radius = 500
-
-print "Matching Points"
-counter = 0
-out_file = open("probe_info.csv", 'wb')
-writer = csv.writer(out_file, delimiter=",")
-in_file = open(path+points_filename, 'rb')
-probe_point_line_reader = csv.reader(in_file)
-counter = 0
-
-# for probe_point in points:
-for probe_point_line in probe_point_line_reader:
-    if counter % 1000 is 0:
-        print counter
-    # print probe_point_line
-    probe_point = ProbePoint(probe_point_line, counter)
-    # print probe_point
-    candidate_points = control_points_in_range(probe_point, search_radius, sorted_latitudes, sorted_longitudes)
-    # all_candidates += candidate_points
-    # print "Number of Candidate Points: ", len(candidate_points)
-
-    # distance scoring
-    distances = [probe_point.point3D.distance_2D(control_point) for control_point in candidate_points]
-    # print "Distances :", distances
-    distance_scores = normalize(distances, search_radius)
-    # print "Distance Scores: ", distance_scores
-
-    # heading scoring
-    heading_info = [heading_diff(probe_point, control_point) for control_point in candidate_points]
-    heading_diffs = [pair[1] for pair in heading_info]
-    # print "Heading Diffs: ", heading_diffs
-    heading_scores = normalize(heading_diffs, 180)
-    # print "heading scores: ", heading_scores
-
-    # speed scoring
-    directions = [pair[0] for pair in heading_info]
-    # print "directions: ", directions
-    speed_diffs = [speed_diff(probe_point, candidate_points[i], directions[i]) for i in range(len(directions))]
-    # print "speed_diffs", speed_diffs
-    speed_scores = normalize(speed_diffs, 150)
-    # print "speed scores: ", speed_scores
-
-    # score totaling
-    distance_weight = 5.0
-    heading_weight = 1.0
-    speed_weight = 1.0
-
-    scores = [distance_weight*distance_scores[i] + heading_weight*heading_scores[i] + speed_weight*speed_scores[i] for i in range(len(candidate_points))]
-    # print "Scores: ", scores
-
-    if len(scores) is not 0:
-        best_score_index = scores.index(min(scores))
-        # print "Best index: ", best_score_index
-        best_point = candidate_points[best_score_index]
-        best_points.append(best_point)
-        probe_point.matchedLink = best_point.parentRef
-        # print "Best point: " + repr(best_point)
-
-        snapped = snap_to_link(probe_point, best_point.parentRef)
-        snapped.parentRef = best_point.parentRef
-        snapped_points.append(snapped)
-        # print "For sampleID: ", probe_point.sampleID
-        # print "We matched link: ", probe_point.linkPVID
-        #write_points_csv(candidate_points, "points.csv")
-
-        # link matching (updating the fields)
-        matched_link = best_point.parentRef
-        matched_link.matchedProbePoints.append(probe_point)
-        probe_point.linkPVID = matched_link.linkPVID
-        probe_point.direction = directions[best_score_index]
-        probe_point.snappedControlPoint = best_point
-
-    # print "For sampleID: ", probe_point.sampleID
-    # print "We matched link: ", probe_point.linkPVID
-    writer.writerow(probe_point.to_csv_list())
-    counter = counter + 1
-
-out_file.close()
-in_file.close()
-write_link_info_csv(links, "link_probe_info.csv")
+# best_points = []
+# all_candidates = []
+# snapped_points = []
+#
+# #points = parse_nodes_csv(path + points_filename, 0, 1, -1)
+#
+# search_radius = 500
+#
+# print "Matching Points"
+# counter = 0
+# out_file = open("probe_info.csv", 'wb')
+# writer = csv.writer(out_file, delimiter=",")
+# in_file = open(path+points_filename, 'rb')
+# probe_point_line_reader = csv.reader(in_file)
+# counter = 0
+#
+# # for probe_point in points:
+# for probe_point_line in probe_point_line_reader:
+#     if counter % 1000 is 0:
+#         print counter
+#     # print probe_point_line
+#     probe_point = ProbePoint(probe_point_line, counter)
+#     # print probe_point
+#     candidate_points = control_points_in_range(probe_point, search_radius, sorted_latitudes, sorted_longitudes)
+#     # all_candidates += candidate_points
+#     # print "Number of Candidate Points: ", len(candidate_points)
+#
+#     # distance scoring
+#     distances = [probe_point.point3D.distance_2D(control_point) for control_point in candidate_points]
+#     # print "Distances :", distances
+#     distance_scores = normalize(distances, search_radius)
+#     # print "Distance Scores: ", distance_scores
+#
+#     # heading scoring
+#     heading_info = [heading_diff(probe_point, control_point) for control_point in candidate_points]
+#     heading_diffs = [pair[1] for pair in heading_info]
+#     # print "Heading Diffs: ", heading_diffs
+#     heading_scores = normalize(heading_diffs, 180)
+#     # print "heading scores: ", heading_scores
+#
+#     # speed scoring
+#     directions = [pair[0] for pair in heading_info]
+#     # print "directions: ", directions
+#     speed_diffs = [speed_diff(probe_point, candidate_points[i], directions[i]) for i in range(len(directions))]
+#     # print "speed_diffs", speed_diffs
+#     speed_scores = normalize(speed_diffs, 150)
+#     # print "speed scores: ", speed_scores
+#
+#     # score totaling
+#     distance_weight = 5.0
+#     heading_weight = 1.0
+#     speed_weight = 1.0
+#
+#     scores = [distance_weight*distance_scores[i] + heading_weight*heading_scores[i] + speed_weight*speed_scores[i] for i in range(len(candidate_points))]
+#     # print "Scores: ", scores
+#
+#     if len(scores) is not 0:
+#         best_score_index = scores.index(min(scores))
+#         # print "Best index: ", best_score_index
+#         best_point = candidate_points[best_score_index]
+#         best_points.append(best_point)
+#         probe_point.matchedLink = best_point.parentRef
+#         # print "Best point: " + repr(best_point)
+#
+#         snapped = snap_to_link(probe_point, best_point.parentRef)
+#         snapped.parentRef = best_point.parentRef
+#         snapped_points.append(snapped)
+#         # print "For sampleID: ", probe_point.sampleID
+#         # print "We matched link: ", probe_point.linkPVID
+#         #write_points_csv(candidate_points, "points.csv")
+#
+#         # link matching (updating the fields)
+#         matched_link = best_point.parentRef
+#         matched_link.matchedProbePoints.append(probe_point)
+#         probe_point.linkPVID = matched_link.linkPVID
+#         probe_point.direction = directions[best_score_index]
+#         probe_point.snappedControlPoint = best_point
+#
+#     # print "For sampleID: ", probe_point.sampleID
+#     # print "We matched link: ", probe_point.linkPVID
+#     writer.writerow(probe_point.to_csv_list())
+#     counter = counter + 1
+#
+# out_file.close()
+# in_file.close()
+# write_link_info_csv(links, "link_probe_info.csv")
 # road slope derivation and evaluation
 # print "Calculating Road Slope"
 #

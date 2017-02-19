@@ -492,8 +492,9 @@ def snap_to_link(probe_point, link):
             projecty = y1 + meters_to_degrees_latitude(projectVy)
 
         #calculate whether this is better than the last
-        distance = sqrt(longitude_degrees_to_meters(px - projectx, y1)**2 + latitude_degrees_to_meters(px - projecty)**2)
-        # print "distance ", i, " is ", distance
+        xdist = longitude_degrees_to_meters(px - projectx, y1)
+        ydist = latitude_degrees_to_meters(py - projecty)
+        distance = sqrt(xdist**2 + ydist**2)
         if distance < best_distance:
             # print "distsqr: ", signed_distance_sqr
             # print "controldistsqr: ", link_distance_sqr
@@ -615,93 +616,81 @@ sorted_latitudes, sorted_longitudes = sort_control_points(control_points)
 # search_radius = 200
 #
 
-best_points = []
-all_candidates = []
-snapped_points = []
-
 #points = parse_nodes_csv(path + points_filename, 0, 1, -1)
 
 search_radius = 500
-
-links_dict = get_links_dict(links)
 
 print "Matching Points"
 counter = 0
 #out_file = open("probe_info.csv", 'wb')
 #writer = csv.writer(out_file, delimiter=",")
-# in_file = open(path+points_filename, 'rb')
-in_file = open("probe_info.csv", 'rb')
+in_file = open(path+points_filename, 'rb')
+# in_file = open("probe_info.csv", 'rb')
 probe_point_line_reader = csv.reader(in_file)
-counter = 0
 
 # for probe_point in points:
 for probe_point_line in probe_point_line_reader:
     if counter % 1000 is 0:
         print counter
-    if counter > 100000:
-        break
     # # print probe_point_line
     probe_point = ProbePoint(probe_point_line, counter)
-    match_probe_linkID(probe_point, links_dict)
-    # # print probe_point
-    # candidate_points = control_points_in_range(probe_point, search_radius, sorted_latitudes, sorted_longitudes)
-    # # all_candidates += candidate_points
-    # # print "Number of Candidate Points: ", len(candidate_points)
-    #
-    # # distance scoring
-    # distances = [probe_point.point3D.distance_2D(control_point) for control_point in candidate_points]
-    # # print "Distances :", distances
-    # distance_scores = normalize(distances, search_radius)
-    # # print "Distance Scores: ", distance_scores
-    #
-    # # heading scoring
-    # heading_info = [heading_diff(probe_point, control_point) for control_point in candidate_points]
-    # heading_diffs = [pair[1] for pair in heading_info]
-    # # print "Heading Diffs: ", heading_diffs
-    # heading_scores = normalize(heading_diffs, 180)
-    # # print "heading scores: ", heading_scores
-    #
-    # # speed scoring
-    # directions = [pair[0] for pair in heading_info]
-    # # print "directions: ", directions
-    # speed_diffs = [speed_diff(probe_point, candidate_points[i], directions[i]) for i in range(len(directions))]
-    # # print "speed_diffs", speed_diffs
-    # speed_scores = normalize(speed_diffs, 150)
-    # # print "speed scores: ", speed_scores
-    #
-    # # score totaling
-    # distance_weight = 5.0
-    # heading_weight = 1.0
-    # speed_weight = 1.0
-    #
-    # scores = [distance_weight*distance_scores[i] + heading_weight*heading_scores[i] + speed_weight*speed_scores[i] for i in range(len(candidate_points))]
-    # # print "Scores: ", scores
-    #
-    # if len(scores) is not 0:
-    #     best_score_index = scores.index(min(scores))
-    #     # print "Best index: ", best_score_index
-    #     best_point = candidate_points[best_score_index]
-    #     best_points.append(best_point)
-    #     probe_point.matchedLink = best_point.parentRef
-    #     # print "Best point: " + repr(best_point)
-    #
-    #     snapped = snap_to_link(probe_point, best_point.parentRef)
-    #     snapped.parentRef = best_point.parentRef
-    #     snapped_points.append(snapped)
-    #     # print "For sampleID: ", probe_point.sampleID
-    #     # print "We matched link: ", probe_point.linkPVID
-    #     #write_points_csv(candidate_points, "points.csv")
-    #
-    #     # link matching (updating the fields)
-    #     matched_link = best_point.parentRef
-    #     # matched_link.matchedProbePoints.append(probe_point)
-    #     control_point_index = matched_link.shapeInfo.index(best_point)
-    #     matched_link.elevSum[control_point_index] += probe_point.point3D.elevation
-    #     matched_link.elevCount[control_point_index] += 1
-    #
-    #     probe_point.linkPVID = matched_link.linkPVID
-    #     probe_point.direction = directions[best_score_index]
-        # probe_point.snappedControlPoint = best_point
+    # print probe_point
+    candidate_points = control_points_in_range(probe_point, search_radius, sorted_latitudes, sorted_longitudes)
+    # all_candidates += candidate_points
+    # print "Number of Candidate Points: ", len(candidate_points)
+
+    # distance scoring
+    distances = [probe_point.point3D.distance_2D(control_point) for control_point in candidate_points]
+    # print "Distances :", distances
+    distance_scores = normalize(distances, search_radius)
+    # print "Distance Scores: ", distance_scores
+
+    # heading scoring
+    heading_info = [heading_diff(probe_point, control_point) for control_point in candidate_points]
+    heading_diffs = [pair[1] for pair in heading_info]
+    # print "Heading Diffs: ", heading_diffs
+    heading_scores = normalize(heading_diffs, 180)
+    # print "heading scores: ", heading_scores
+
+    # speed scoring
+    directions = [pair[0] for pair in heading_info]
+    # print "directions: ", directions
+    speed_diffs = [speed_diff(probe_point, candidate_points[i], directions[i]) for i in range(len(directions))]
+    # print "speed_diffs", speed_diffs
+    speed_scores = normalize(speed_diffs, 150)
+    # print "speed scores: ", speed_scores
+
+    # score totaling
+    distance_weight = 5.0
+    heading_weight = 1.0
+    speed_weight = 1.0
+
+    scores = [distance_weight*distance_scores[i] + heading_weight*heading_scores[i] + speed_weight*speed_scores[i] for i in range(len(candidate_points))]
+    # print "Scores: ", scores
+
+    if len(scores) is not 0:
+        best_score_index = scores.index(min(scores))
+        # print "Best index: ", best_score_index
+        best_point = candidate_points[best_score_index]
+        probe_point.matchedLink = best_point.parentRef
+        # print "Best point: " + repr(best_point)
+
+        matched_link = best_point.parentRef
+        snapped = snap_to_link(probe_point, matched_link)
+        snapped.parentRef = best_point.parentRef
+        # print "For sampleID: ", probe_point.sampleID
+        # print "We matched link: ", probe_point.linkPVID
+        #write_points_csv(candidate_points, "points.csv")
+
+        # link matching (updating the fields)
+        # matched_link.matchedProbePoints.append(probe_point)
+        control_point_index = matched_link.shapeInfo.index(best_point)
+        matched_link.elevSum[control_point_index] += probe_point.point3D.elevation
+        matched_link.elevCount[control_point_index] += 1
+
+        probe_point.linkPVID = matched_link.linkPVID
+        probe_point.direction = directions[best_score_index]
+        #probe_point.snappedControlPoint = best_point
 
 
 
